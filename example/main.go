@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"bezel"
+	"github.com/hegner123/bezel"
 )
 
 const prompt = "> "

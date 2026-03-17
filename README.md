@@ -7,7 +7,7 @@ Built for agentic CLI tools where you need a persistent input area but don't wan
 ## Install
 
 ```
-go get bezel@latest
+go get github.com/hegner123/bezel@latest
 ```
 
 Requires Go 1.22+. macOS only (darwin/amd64, darwin/arm64). Linux support planned.
