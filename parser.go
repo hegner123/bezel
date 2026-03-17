@@ -223,6 +223,8 @@ func (p *parser) parseAltKey(data []byte) (*Event, int) {
 	switch {
 	case b == 0x7f:
 		return &Event{Type: EventKey, Key: KeyBackspace, Mod: ModAlt, Raw: raw}, 2
+	case b == 0x0d:
+		return &Event{Type: EventKey, Key: KeyEnter, Mod: ModAlt, Raw: raw}, 2
 	case b < 0x20:
 		return &Event{
 			Type: EventKey, Key: KeyRune,

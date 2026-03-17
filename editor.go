@@ -1,12 +1,36 @@
 package bezel
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // LineEditor manages an editable line of text with cursor position.
 // Zero value is ready to use.
 type LineEditor struct {
 	buf []rune
 	pos int
+}
+
+// lineStart returns the buffer index of the first rune on the current line.
+func (e *LineEditor) lineStart() int {
+	for i := e.pos - 1; i >= 0; i-- {
+		if e.buf[i] == '\n' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// lineEnd returns the buffer index just past the last rune on the current
+// line (the position of the next '\n', or len(buf) if on the last line).
+func (e *LineEditor) lineEnd() int {
+	for i := e.pos; i < len(e.buf); i++ {
+		if e.buf[i] == '\n' {
+			return i
+		}
+	}
+	return len(e.buf)
 }
 
 // Insert adds a rune at the cursor and advances the cursor.
@@ -20,6 +44,11 @@ func (e *LineEditor) InsertString(s string) {
 	runes := []rune(s)
 	e.buf = slices.Insert(e.buf, e.pos, runes...)
 	e.pos += len(runes)
+}
+
+// InsertNewline inserts a newline at the cursor, starting a new line.
+func (e *LineEditor) InsertNewline() {
+	e.Insert('\n')
 }
 
 // Backspace deletes the rune before the cursor.
@@ -59,67 +88,119 @@ func (e *LineEditor) Right() bool {
 	return true
 }
 
-// Home moves the cursor to the start.
-func (e *LineEditor) Home() { e.pos = 0 }
+// Up moves the cursor to the same column on the previous line.
+// Returns false if already on the first line.
+func (e *LineEditor) Up() bool {
+	ls := e.lineStart()
+	if ls == 0 {
+		return false
+	}
+	col := e.pos - ls
+	prevStart := 0
+	for i := ls - 2; i >= 0; i-- {
+		if e.buf[i] == '\n' {
+			prevStart = i + 1
+			break
+		}
+	}
+	prevLen := (ls - 1) - prevStart
+	if col > prevLen {
+		col = prevLen
+	}
+	e.pos = prevStart + col
+	return true
+}
 
-// End moves the cursor to the end.
-func (e *LineEditor) End() { e.pos = len(e.buf) }
+// Down moves the cursor to the same column on the next line.
+// Returns false if already on the last line.
+func (e *LineEditor) Down() bool {
+	le := e.lineEnd()
+	if le >= len(e.buf) {
+		return false
+	}
+	col := e.pos - e.lineStart()
+	nextStart := le + 1
+	nextEnd := len(e.buf)
+	for i := nextStart; i < len(e.buf); i++ {
+		if e.buf[i] == '\n' {
+			nextEnd = i
+			break
+		}
+	}
+	nextLen := nextEnd - nextStart
+	if col > nextLen {
+		col = nextLen
+	}
+	e.pos = nextStart + col
+	return true
+}
+
+// Home moves the cursor to the start of the current line.
+func (e *LineEditor) Home() { e.pos = e.lineStart() }
+
+// End moves the cursor to the end of the current line.
+func (e *LineEditor) End() { e.pos = e.lineEnd() }
 
 // WordLeft moves the cursor to the start of the previous word.
+// Newlines are treated as whitespace boundaries.
 func (e *LineEditor) WordLeft() {
-	for e.pos > 0 && e.buf[e.pos-1] == ' ' {
+	for e.pos > 0 && (e.buf[e.pos-1] == ' ' || e.buf[e.pos-1] == '\n') {
 		e.pos--
 	}
-	for e.pos > 0 && e.buf[e.pos-1] != ' ' {
+	for e.pos > 0 && e.buf[e.pos-1] != ' ' && e.buf[e.pos-1] != '\n' {
 		e.pos--
 	}
 }
 
 // WordRight moves the cursor past the end of the next word.
+// Newlines are treated as whitespace boundaries.
 func (e *LineEditor) WordRight() {
 	n := len(e.buf)
-	for e.pos < n && e.buf[e.pos] != ' ' {
+	for e.pos < n && e.buf[e.pos] != ' ' && e.buf[e.pos] != '\n' {
 		e.pos++
 	}
-	for e.pos < n && e.buf[e.pos] == ' ' {
+	for e.pos < n && (e.buf[e.pos] == ' ' || e.buf[e.pos] == '\n') {
 		e.pos++
 	}
 }
 
-// DeleteToStart removes everything from the cursor to the start of the line.
-// Returns the deleted text.
+// DeleteToStart removes everything from the cursor to the start of the
+// current line. Returns the deleted text.
 func (e *LineEditor) DeleteToStart() string {
-	if e.pos == 0 {
+	ls := e.lineStart()
+	if e.pos == ls {
 		return ""
 	}
-	cut := string(e.buf[:e.pos])
-	e.buf = slices.Delete(e.buf, 0, e.pos)
-	e.pos = 0
+	cut := string(e.buf[ls:e.pos])
+	e.buf = slices.Delete(e.buf, ls, e.pos)
+	e.pos = ls
 	return cut
 }
 
-// DeleteToEnd removes everything from the cursor to the end of the line.
-// Returns the deleted text.
+// DeleteToEnd removes everything from the cursor to the end of the
+// current line. Returns the deleted text.
 func (e *LineEditor) DeleteToEnd() string {
-	if e.pos >= len(e.buf) {
+	le := e.lineEnd()
+	if e.pos >= le {
 		return ""
 	}
-	cut := string(e.buf[e.pos:])
-	e.buf = e.buf[:e.pos]
+	cut := string(e.buf[e.pos:le])
+	e.buf = slices.Delete(e.buf, e.pos, le)
 	return cut
 }
 
 // DeleteWordBack removes the word before the cursor.
+// Newlines are treated as whitespace boundaries.
 // Returns the deleted text.
 func (e *LineEditor) DeleteWordBack() string {
 	if e.pos == 0 {
 		return ""
 	}
 	start := e.pos
-	for e.pos > 0 && e.buf[e.pos-1] == ' ' {
+	for e.pos > 0 && (e.buf[e.pos-1] == ' ' || e.buf[e.pos-1] == '\n') {
 		e.pos--
 	}
-	for e.pos > 0 && e.buf[e.pos-1] != ' ' {
+	for e.pos > 0 && e.buf[e.pos-1] != ' ' && e.buf[e.pos-1] != '\n' {
 		e.pos--
 	}
 	cut := string(e.buf[e.pos:start])
@@ -158,6 +239,98 @@ func (e *LineEditor) Len() int { return len(e.buf) }
 
 // Empty reports whether the editor has no content.
 func (e *LineEditor) Empty() bool { return len(e.buf) == 0 }
+
+// Row returns the 0-indexed line number of the cursor.
+func (e *LineEditor) Row() int {
+	row := 0
+	for i := range e.pos {
+		if e.buf[i] == '\n' {
+			row++
+		}
+	}
+	return row
+}
+
+// Col returns the 0-indexed column of the cursor within the current line.
+func (e *LineEditor) Col() int { return e.pos - e.lineStart() }
+
+// CursorPos returns the cursor position as (row, col), both 0-indexed.
+func (e *LineEditor) CursorPos() (row, col int) { return e.Row(), e.Col() }
+
+// Lines returns the editor content split into lines.
+func (e *LineEditor) Lines() []string { return strings.Split(string(e.buf), "\n") }
+
+// VisualInfo describes the editor content laid out for rendering in a
+// terminal of a given width.
+type VisualInfo struct {
+	Rows      []string // Visual rows (wrapped, with prefixes applied).
+	CursorRow int      // 0-indexed visual row of the cursor.
+	CursorCol int      // 0-indexed visual column of the cursor.
+}
+
+// Visual computes visual rows and cursor position accounting for line
+// wrapping within the given terminal width. prefixes[i] is prepended to
+// logical line i (e.g. a prompt or continuation marker); missing entries
+// default to "". The caller passes Rows to Bezel.RedrawPrompt along with
+// CursorRow and CursorCol.
+func (e *LineEditor) Visual(width int, prefixes []string) VisualInfo {
+	if width <= 0 {
+		width = 80
+	}
+
+	lines := e.Lines()
+	curRow, curCol := e.CursorPos()
+
+	var info VisualInfo
+
+	for i, line := range lines {
+		prefix := ""
+		if i < len(prefixes) {
+			prefix = prefixes[i]
+		}
+
+		plen := len([]rune(prefix))
+		runes := []rune(line)
+		avail := width - plen
+		if avail < 1 {
+			avail = 1
+		}
+
+		baseVRow := len(info.Rows)
+
+		// Build visual rows for this logical line.
+		if len(runes) <= avail {
+			info.Rows = append(info.Rows, prefix+string(runes))
+		} else {
+			info.Rows = append(info.Rows, prefix+string(runes[:avail]))
+			for start := avail; start < len(runes); start += width {
+				end := start + width
+				if end > len(runes) {
+					end = len(runes)
+				}
+				info.Rows = append(info.Rows, string(runes[start:end]))
+			}
+		}
+
+		// Compute cursor position if on this logical line.
+		if i == curRow {
+			if curCol < avail {
+				info.CursorRow = baseVRow
+				info.CursorCol = plen + curCol
+			} else {
+				past := curCol - avail
+				info.CursorRow = baseVRow + 1 + past/width
+				info.CursorCol = past % width
+			}
+			// Cursor at a wrap boundary may exceed current rows.
+			for info.CursorRow >= len(info.Rows) {
+				info.Rows = append(info.Rows, "")
+			}
+		}
+	}
+
+	return info
+}
 
 // HandleEvent processes an input event using the given keymap and
 // optional history. Pass nil for hist if history is not needed.
@@ -216,6 +389,32 @@ func (e *LineEditor) execAction(a Action, hist *History) (Action, string) {
 		e.DeleteWordBack()
 	case ActionSubmit:
 		return ActionSubmit, e.Submit()
+	case ActionNewline:
+		e.InsertNewline()
+	case ActionUp:
+		if e.Up() {
+			return ActionUp, ""
+		}
+		if hist == nil {
+			return ActionNone, ""
+		}
+		if s, ok := hist.Prev(e.String()); ok {
+			e.Set(s)
+			return ActionHistoryPrev, ""
+		}
+		return ActionNone, ""
+	case ActionDown:
+		if e.Down() {
+			return ActionDown, ""
+		}
+		if hist == nil {
+			return ActionNone, ""
+		}
+		if s, ok := hist.Next(); ok {
+			e.Set(s)
+			return ActionHistoryNext, ""
+		}
+		return ActionNone, ""
 	case ActionHistoryPrev:
 		if hist == nil {
 			return ActionNone, ""

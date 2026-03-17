@@ -22,6 +22,9 @@ const (
 	ActionDeleteWordBack               // Cut previous word.
 	ActionHistoryPrev                  // Previous history entry.
 	ActionHistoryNext                  // Next history entry.
+	ActionNewline                      // Insert newline.
+	ActionUp                           // Cursor up (line nav, then history).
+	ActionDown                         // Cursor down (line nav, then history).
 )
 
 // KeyBind identifies a key combination for use as a KeyMap key.
@@ -36,7 +39,9 @@ type KeyBind struct {
 // KeyMap maps key combinations to actions.
 type KeyMap map[KeyBind]Action
 
-// DefaultKeyMap returns a keymap with standard terminal and emacs bindings.
+// DefaultKeyMap returns a keymap with neovim insert-mode bindings.
+// Movement uses arrow keys and Home/End. Ctrl+H, Ctrl+W, and Ctrl+U
+// match vim's insert-mode deletion shortcuts.
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		{Key: KeyEnter}:                       ActionSubmit,
@@ -44,10 +49,36 @@ func DefaultKeyMap() KeyMap {
 
 		{Key: KeyBackspace}:                   ActionBackspace,
 		{Key: KeyDelete}:                      ActionDelete,
+		{Key: KeyRune, Ch: 'h', Mod: ModCtrl}: ActionBackspace,
+		{Key: KeyRune, Ch: 'w', Mod: ModCtrl}: ActionDeleteWordBack,
+		{Key: KeyRune, Ch: 'u', Mod: ModCtrl}: ActionDeleteToStart,
+
+		{Key: KeyLeft}:                ActionLeft,
+		{Key: KeyRight}:               ActionRight,
+		{Key: KeyLeft, Mod: ModCtrl}:  ActionWordLeft,
+		{Key: KeyRight, Mod: ModCtrl}: ActionWordRight,
+		{Key: KeyHome}:                ActionHome,
+		{Key: KeyEnd}:                 ActionEnd,
+
+		{Key: KeyEnter, Mod: ModAlt}: ActionNewline,
+
+		{Key: KeyUp}:   ActionUp,
+		{Key: KeyDown}: ActionDown,
+	}
+}
+
+// EmacsKeyMap returns a keymap with emacs/readline bindings.
+func EmacsKeyMap() KeyMap {
+	return KeyMap{
+		{Key: KeyEnter}:                       ActionSubmit,
+		{Key: KeyRune, Ch: 'd', Mod: ModCtrl}: ActionQuit,
+
+		{Key: KeyBackspace}:                   ActionBackspace,
+		{Key: KeyDelete}:                      ActionDelete,
+		{Key: KeyRune, Ch: 'h', Mod: ModCtrl}: ActionBackspace,
+		{Key: KeyRune, Ch: 'w', Mod: ModCtrl}: ActionDeleteWordBack,
 		{Key: KeyRune, Ch: 'u', Mod: ModCtrl}: ActionDeleteToStart,
 		{Key: KeyRune, Ch: 'k', Mod: ModCtrl}: ActionDeleteToEnd,
-		{Key: KeyRune, Ch: 'w', Mod: ModCtrl}: ActionDeleteWordBack,
-		{Key: KeyRune, Ch: 'h', Mod: ModCtrl}: ActionBackspace,
 		{Key: KeyBackspace, Mod: ModAlt}:      ActionDeleteWordBack,
 
 		{Key: KeyLeft}:                        ActionLeft,
@@ -63,8 +94,10 @@ func DefaultKeyMap() KeyMap {
 		{Key: KeyRune, Ch: 'b', Mod: ModAlt}:  ActionWordLeft,
 		{Key: KeyRune, Ch: 'f', Mod: ModAlt}:  ActionWordRight,
 
-		{Key: KeyUp}:                          ActionHistoryPrev,
-		{Key: KeyDown}:                        ActionHistoryNext,
+		{Key: KeyEnter, Mod: ModAlt}: ActionNewline,
+
+		{Key: KeyUp}:                          ActionUp,
+		{Key: KeyDown}:                        ActionDown,
 		{Key: KeyRune, Ch: 'p', Mod: ModCtrl}: ActionHistoryPrev,
 		{Key: KeyRune, Ch: 'n', Mod: ModCtrl}: ActionHistoryNext,
 	}

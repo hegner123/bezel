@@ -180,6 +180,18 @@ func TestParseAltKeys(t *testing.T) {
 	}
 }
 
+func TestParseAltEnter(t *testing.T) {
+	p := newParser()
+	events := p.Parse([]byte{0x1b, 0x0d})
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	ev := events[0]
+	if ev.Key != KeyEnter || ev.Mod != ModAlt {
+		t.Errorf("got Key=%s Mod=%d, want KeyEnter/ModAlt", ev.Key, ev.Mod)
+	}
+}
+
 func TestParseUTF8(t *testing.T) {
 	tests := []struct {
 		name string
