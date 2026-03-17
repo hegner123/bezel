@@ -107,6 +107,46 @@ fmt.Println("output") // lands in scroll region
 b.RedrawPrompt(...)    // cursor back to bezel
 ```
 
+### Input during streaming
+
+Bezel captures keystrokes continuously in a background goroutine — they are never lost. But your event loop must drain `b.Events()` for the user to see their typing in real-time.
+
+If your loop blocks on a synchronous call, keystrokes queue silently:
+
+```go
+// User can't see typing until this returns.
+response := callLLM(text)
+```
+
+To allow typing while streaming, use `select` to multiplex both channels:
+
+```go
+for {
+    select {
+    case ev := <-b.Events():
+        action, _ := ed.HandleEvent(ev, km, &hist)
+        if action == bezel.ActionQuit { return }
+        // Use Redraw (not RedrawPrompt) so the cursor stays in
+        // the scroll region and streamed output renders correctly.
+        // The user sees their text update in the bezel but without
+        // a blinking cursor at the prompt.
+        b.Redraw("streaming...", "> "+ed.String(), "Ctrl-C cancel")
+
+    case chunk, ok := <-sseChan:
+        if !ok {
+            // Stream done — switch to input mode.
+            break
+        }
+        os.Stdout.Write(chunk)
+    }
+}
+
+// Streaming finished. Show cursor at prompt.
+b.RedrawPrompt(1, 2+ed.Pos(), "ready", "> "+ed.String(), "hints")
+```
+
+The rule: if you are reading from `b.Events()`, the user can type. If you are blocked on something else, keystrokes queue until you resume reading.
+
 ### Resize
 
 On terminal resize, the screen is cleared and an `EventResize` is delivered. Re-emit any scroll region content in your handler:
