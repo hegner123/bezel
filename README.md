@@ -10,7 +10,7 @@ Built for agentic CLI tools where you need a persistent input area but don't wan
 go get github.com/hegner123/bezel@latest
 ```
 
-Requires Go 1.22+. macOS only (darwin/amd64, darwin/arm64). Linux support planned.
+Requires Go 1.22+. Supports macOS and Linux (amd64, arm64).
 
 ## Quick start
 
@@ -381,9 +381,10 @@ Use these if you need raw terminal control without the scroll region chrome.
 
 ## Platform
 
-macOS (darwin) only. Uses `ioctl` syscalls (`TIOCGETA`/`TIOCSETA`/`TIOCGWINSZ`) via `syscall.Syscall`. No cgo.
+macOS and Linux. Uses `ioctl` syscalls via `syscall.Syscall`. No cgo.
 
-Linux support requires a `term_linux.go` with the corresponding ioctl constants and termios struct layout.
+- **macOS:** `TIOCGETA`/`TIOCSETA`/`TIOCGWINSZ`
+- **Linux:** `TCGETS`/`TCSETS`/`TIOCGWINSZ`
 
 ## License
 
