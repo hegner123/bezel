@@ -7,86 +7,73 @@ import (
 	"bezel"
 )
 
+const prompt = "> "
+
 func main() {
-	c, err := bezel.New(os.Stdin, os.Stdout, 3)
+	b, err := bezel.New(os.Stdin, os.Stdout, 3)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer c.Close()
+	defer b.Close()
 
-	var input []rune
-	var history []string
+	var ed bezel.LineEditor
+	var hist bezel.History
 	status := "ready"
+	km := bezel.DefaultKeyMap()
 
 	banner := func() {
-		fmt.Println("Chrome Phase 3 — scroll region demo")
-		fmt.Println("Type text, press Enter to submit.")
-		fmt.Println("Submitted text appears here in the scroll region.")
+		fmt.Println("Bezel — line editor with history")
+		fmt.Println("Up/Down or Ctrl-P/N navigate history")
 		fmt.Println("")
-		for _, line := range history {
-			fmt.Println(line)
+		for _, entry := range hist.Entries() {
+			fmt.Println(prompt + entry)
 		}
 	}
 
 	redraw := func() {
-		size := c.Size()
-		c.Redraw(
+		size := b.Size()
+		b.RedrawPrompt(1, len(prompt)+ed.Pos(),
 			fmt.Sprintf("── %dx%d ── %s ", size.Cols, size.Rows, status),
-			fmt.Sprintf("\033[1m>\033[0m %s\033[7m \033[0m", string(input)),
-			"Enter submit | Backspace delete | Ctrl-D quit",
+			prompt+ed.String(),
+			"Enter submit | Up/Down history | Ctrl-D quit",
 		)
 	}
 
 	banner()
 	redraw()
 
-	for ev := range c.Events() {
-		switch ev.Type {
-		case bezel.EventKey:
-			switch {
-			case ev.Key == bezel.KeyRune && ev.Ch == 'd' && ev.Mod == bezel.ModCtrl:
-				return
-			case ev.Key == bezel.KeyEnter:
-				if len(input) > 0 {
-					line := fmt.Sprintf("> %s", string(input))
-					history = append(history, line)
-					fmt.Println(line)
-					status = fmt.Sprintf("submitted %d chars", len(input))
-					input = input[:0]
-				}
-			case ev.Key == bezel.KeyBackspace:
-				if len(input) > 0 {
-					input = input[:len(input)-1]
-				}
-				status = "editing"
-			case ev.Key == bezel.KeyRune && ev.Mod == 0:
-				input = append(input, ev.Ch)
-				status = "editing"
-			case ev.Key == bezel.KeyRune && ev.Mod == bezel.ModAlt:
-				status = fmt.Sprintf("Alt+%c", ev.Ch)
-			case ev.Key != bezel.KeyRune:
-				status = ev.Key.String()
-				if ev.Mod != 0 {
-					mod := ""
-					if ev.Mod&bezel.ModCtrl != 0 {
-						mod += "Ctrl+"
-					}
-					if ev.Mod&bezel.ModAlt != 0 {
-						mod += "Alt+"
-					}
-					if ev.Mod&bezel.ModShift != 0 {
-						mod += "Shift+"
-					}
-					status = mod + ev.Key.String()
-				}
-			}
-		case bezel.EventPaste:
-			input = append(input, []rune(ev.Text)...)
-			status = fmt.Sprintf("pasted %d chars", len(ev.Text))
-		case bezel.EventResize:
+	for ev := range b.Events() {
+		if ev.Type == bezel.EventResize {
 			status = "resized"
 			banner()
+			redraw()
+			continue
+		}
+
+		action, text := ed.HandleEvent(ev, km, &hist)
+		switch action {
+		case bezel.ActionQuit:
+			return
+		case bezel.ActionSubmit:
+			hist.Add(text)
+			b.CursorToScroll()
+			fmt.Println(prompt + text)
+			status = fmt.Sprintf("submitted %d chars", len([]rune(text)))
+		case bezel.ActionPaste:
+			status = fmt.Sprintf("pasted %d chars", len([]rune(text)))
+		case bezel.ActionHistoryPrev, bezel.ActionHistoryNext:
+			status = "history"
+		case bezel.ActionDeleteToStart:
+			status = "cut to start"
+		case bezel.ActionDeleteToEnd:
+			status = "cut to end"
+		case bezel.ActionDeleteWordBack:
+			status = "cut word"
+		case bezel.ActionNone:
+			continue
+		default:
+			status = "editing"
 		}
 		redraw()
 	}

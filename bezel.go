@@ -12,8 +12,8 @@ import (
 
 // Bezel manages a terminal scroll region with fixed bezel rows at the bottom.
 // stdout flows naturally in the scroll region (top area). The bezel area
-// (bottom N rows) is redrawn via Redraw. Events from keyboard input and
-// terminal resize are delivered on a single channel.
+// (bottom N rows) is redrawn via Redraw or RedrawPrompt. Events from keyboard
+// input and terminal resize are delivered on a single channel.
 type Bezel struct {
 	in     *os.File
 	out    *os.File
@@ -62,13 +62,39 @@ func New(in, out *os.File, bezelHeight int) (*Bezel, error) {
 		cancel: cancel,
 	}
 
-	c.applyScrollRegion()
+	c.initScrollRegion()
 
 	signal.Notify(c.sigCh, syscall.SIGWINCH)
 	inputCh := ReadInput(ctx, in)
 	go c.run(ctx, inputCh)
 
 	return c, nil
+}
+
+// initScrollRegion sets the scroll region and clears only the bezel rows.
+// Existing terminal content in the scroll region is preserved.
+func (c *Bezel) initScrollRegion() {
+	c.mu.Lock()
+	size := c.size
+	c.mu.Unlock()
+
+	sb := scrollBottom(int(size.Rows), c.height)
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	var buf bytes.Buffer
+	buf.WriteString("\0337")            // DECSC: save cursor position
+	fmt.Fprintf(&buf, "\033[1;%dr", sb) // set scroll region
+
+	// Clear only the bezel rows.
+	for i := range c.height {
+		row := sb + i + 1
+		fmt.Fprintf(&buf, "\033[%d;1H\033[2K", row)
+	}
+
+	buf.WriteString("\0338") // DECRC: restore cursor to original position
+	c.out.Write(buf.Bytes())
 }
 
 // Events returns the channel of input and resize events.
@@ -85,10 +111,10 @@ func (c *Bezel) Size() Size {
 }
 
 // Redraw clears and redraws the bezel rows with the given lines.
-// Each line corresponds to a bezel row (bottom of terminal).
-// Extra lines beyond bezelHeight are ignored.
-// The entire update is written as a single atomic write to avoid
-// interleaving with concurrent stdout output.
+// The cursor is saved before drawing and restored afterward, so it
+// remains wherever stdout left it in the scroll region.
+// Use this when output is streaming and the cursor should stay in
+// the scroll region.
 func (c *Bezel) Redraw(lines ...string) {
 	c.mu.Lock()
 	size := c.size
@@ -111,6 +137,59 @@ func (c *Bezel) Redraw(lines ...string) {
 	}
 
 	buf.WriteString("\0338\033[?25h") // DECRC (restore cursor), show cursor
+	c.out.Write(buf.Bytes())
+}
+
+// RedrawPrompt clears and redraws the bezel rows, then positions the
+// terminal cursor at (row, col) within the bezel area.
+// row is 0-indexed from the top of the bezel, col is 0-indexed from left.
+// Use this during interactive input so the cursor appears at the prompt.
+//
+// Before writing to stdout after RedrawPrompt, call CursorToScroll first.
+func (c *Bezel) RedrawPrompt(row, col int, lines ...string) {
+	c.mu.Lock()
+	size := c.size
+	c.mu.Unlock()
+
+	sb := scrollBottom(int(size.Rows), c.height)
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	var buf bytes.Buffer
+	buf.WriteString("\033[?25l") // hide cursor
+
+	for i := range c.height {
+		r := sb + i + 1
+		fmt.Fprintf(&buf, "\033[%d;1H\033[2K", r)
+		if i < len(lines) {
+			buf.WriteString(lines[i])
+		}
+	}
+
+	// Position cursor within the bezel.
+	absRow := sb + row + 1
+	absCol := col + 1
+	fmt.Fprintf(&buf, "\033[%d;%dH\033[?25h", absRow, absCol)
+	c.out.Write(buf.Bytes())
+}
+
+// CursorToScroll moves the cursor to the bottom of the scroll region.
+// Call this before writing to stdout when the cursor is in the bezel
+// (after RedrawPrompt). Stdout writes will appear at the bottom of
+// the scroll region and scroll older content upward.
+func (c *Bezel) CursorToScroll() {
+	c.mu.Lock()
+	size := c.size
+	c.mu.Unlock()
+
+	sb := scrollBottom(int(size.Rows), c.height)
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "\033[%d;1H", sb)
 	c.out.Write(buf.Bytes())
 }
 
@@ -160,7 +239,7 @@ func (c *Bezel) run(ctx context.Context, inputCh <-chan Event) {
 			c.size = newSize
 			c.mu.Unlock()
 
-			c.applyScrollRegion()
+			c.resetScrollRegion()
 
 			select {
 			case c.merged <- Event{Type: EventResize}:
@@ -173,7 +252,10 @@ func (c *Bezel) run(ctx context.Context, inputCh <-chan Event) {
 	}
 }
 
-func (c *Bezel) applyScrollRegion() {
+// resetScrollRegion clears the entire display and re-establishes the scroll
+// region. Used on terminal resize where content reflow makes preservation
+// unreliable. The user's EventResize handler should re-emit any content.
+func (c *Bezel) resetScrollRegion() {
 	c.mu.Lock()
 	size := c.size
 	c.mu.Unlock()
