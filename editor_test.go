@@ -573,11 +573,9 @@ func TestVisualNoWrap(t *testing.T) {
 	if len(v.Rows) != 1 {
 		t.Fatalf("rows=%d, want 1", len(v.Rows))
 	}
-	if v.Rows[0] != "> hello" {
-		t.Fatalf("row 0=%q, want %q", v.Rows[0], "> hello")
-	}
-	if v.CursorRow != 0 || v.CursorCol != 7 {
-		t.Fatalf("cursor=(%d,%d), want (0,7)", v.CursorRow, v.CursorCol)
+	want := "> hello" + CursorBlock
+	if v.Rows[0] != want {
+		t.Fatalf("row 0=%q, want %q", v.Rows[0], want)
 	}
 }
 
@@ -587,20 +585,18 @@ func TestVisualWrapSingleLine(t *testing.T) {
 	e.InsertString("abcdefghij") // 10 chars, exceeds avail
 	v := e.Visual(10, []string{"> "})
 
+	// Content with cursor: "abcdefghij█" (11 runes)
 	// First visual row: "> abcdefgh" (prefix + 8)
-	// Second visual row: "ij" (remaining 2)
+	// Second visual row: "ij█" (remaining 3)
 	if len(v.Rows) != 2 {
 		t.Fatalf("rows=%d, want 2", len(v.Rows))
 	}
 	if v.Rows[0] != "> abcdefgh" {
 		t.Fatalf("row 0=%q, want %q", v.Rows[0], "> abcdefgh")
 	}
-	if v.Rows[1] != "ij" {
-		t.Fatalf("row 1=%q, want %q", v.Rows[1], "ij")
-	}
-	// Cursor at end of "ij": col=10, past avail. past=2, vrow=1+0=1, vcol=2
-	if v.CursorRow != 1 || v.CursorCol != 2 {
-		t.Fatalf("cursor=(%d,%d), want (1,2)", v.CursorRow, v.CursorCol)
+	want1 := "ij" + CursorBlock
+	if v.Rows[1] != want1 {
+		t.Fatalf("row 1=%q, want %q", v.Rows[1], want1)
 	}
 }
 
@@ -608,14 +604,17 @@ func TestVisualWrapExactBoundary(t *testing.T) {
 	var e LineEditor
 	// prefix "> " (2), width 10, avail=8
 	e.InsertString("abcdefgh") // exactly avail chars
-	// cursor at col 8 == avail, should wrap to next visual row
+	// cursor at col 8 == avail, cursor block wraps to next row
 	v := e.Visual(10, []string{"> "})
 
 	if len(v.Rows) != 2 {
 		t.Fatalf("rows=%d, want 2", len(v.Rows))
 	}
-	if v.CursorRow != 1 || v.CursorCol != 0 {
-		t.Fatalf("cursor=(%d,%d), want (1,0)", v.CursorRow, v.CursorCol)
+	if v.Rows[0] != "> abcdefgh" {
+		t.Fatalf("row 0=%q, want %q", v.Rows[0], "> abcdefgh")
+	}
+	if v.Rows[1] != CursorBlock {
+		t.Fatalf("row 1=%q, want %q", v.Rows[1], CursorBlock)
 	}
 }
 
@@ -628,12 +627,18 @@ func TestVisualWrapCursorMiddle(t *testing.T) {
 	e.Right()
 	e.Right()
 	e.Right()
-	e.Right() // col=5, still on first visual row
+	e.Right() // pos=5, cursor block at position 5
 
 	v := e.Visual(10, []string{"> "})
-	// col=5 < avail(8), so CursorCol = 2+5 = 7
-	if v.CursorRow != 0 || v.CursorCol != 7 {
-		t.Fatalf("cursor=(%d,%d), want (0,7)", v.CursorRow, v.CursorCol)
+	// Content with cursor: "abcde█fghij" (11 runes)
+	// First 8: "abcde█fg" → "> abcde█fg"
+	// Remaining: "hij"
+	want0 := "> abcde" + CursorBlock + "fg"
+	if v.Rows[0] != want0 {
+		t.Fatalf("row 0=%q, want %q", v.Rows[0], want0)
+	}
+	if v.Rows[1] != "hij" {
+		t.Fatalf("row 1=%q, want %q", v.Rows[1], "hij")
 	}
 }
 
@@ -648,12 +653,9 @@ func TestVisualMultiline(t *testing.T) {
 	if v.Rows[0] != "> hello" {
 		t.Fatalf("row 0=%q, want %q", v.Rows[0], "> hello")
 	}
-	if v.Rows[1] != "  world" {
-		t.Fatalf("row 1=%q, want %q", v.Rows[1], "  world")
-	}
-	// Cursor at end of "world": row=1, col=5, CursorCol=2+5=7
-	if v.CursorRow != 1 || v.CursorCol != 7 {
-		t.Fatalf("cursor=(%d,%d), want (1,7)", v.CursorRow, v.CursorCol)
+	want1 := "  world" + CursorBlock
+	if v.Rows[1] != want1 {
+		t.Fatalf("row 1=%q, want %q", v.Rows[1], want1)
 	}
 }
 
@@ -664,7 +666,8 @@ func TestVisualMultilineWrap(t *testing.T) {
 	v := e.Visual(10, []string{"> ", "  "})
 
 	// line 0: "> short" (1 visual row)
-	// line 1: "  abcdefgh" + "ij" (2 visual rows)
+	// line 1: "abcdefghij█" with prefix "  ", avail=8
+	//   "  abcdefgh" + "ij█" (2 visual rows)
 	if len(v.Rows) != 3 {
 		t.Fatalf("rows=%d, want 3", len(v.Rows))
 	}
@@ -674,13 +677,9 @@ func TestVisualMultilineWrap(t *testing.T) {
 	if v.Rows[1] != "  abcdefgh" {
 		t.Fatalf("row 1=%q", v.Rows[1])
 	}
-	if v.Rows[2] != "ij" {
-		t.Fatalf("row 2=%q", v.Rows[2])
-	}
-	// Cursor at end of "abcdefghij": col=10 >= avail(8)
-	// past=2, CursorRow=1+1+0=2, CursorCol=2
-	if v.CursorRow != 2 || v.CursorCol != 2 {
-		t.Fatalf("cursor=(%d,%d), want (2,2)", v.CursorRow, v.CursorCol)
+	want2 := "ij" + CursorBlock
+	if v.Rows[2] != want2 {
+		t.Fatalf("row 2=%q, want %q", v.Rows[2], want2)
 	}
 }
 
@@ -691,11 +690,9 @@ func TestVisualEmpty(t *testing.T) {
 	if len(v.Rows) != 1 {
 		t.Fatalf("rows=%d, want 1", len(v.Rows))
 	}
-	if v.Rows[0] != "> " {
-		t.Fatalf("row 0=%q, want %q", v.Rows[0], "> ")
-	}
-	if v.CursorRow != 0 || v.CursorCol != 2 {
-		t.Fatalf("cursor=(%d,%d), want (0,2)", v.CursorRow, v.CursorCol)
+	want := "> " + CursorBlock
+	if v.Rows[0] != want {
+		t.Fatalf("row 0=%q, want %q", v.Rows[0], want)
 	}
 }
 

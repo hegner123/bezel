@@ -39,13 +39,13 @@ type KeyBind struct {
 // KeyMap maps key combinations to actions.
 type KeyMap map[KeyBind]Action
 
-// DefaultKeyMap returns a keymap with neovim insert-mode bindings.
+// DefaultKeyMap returns a keymap with standard terminal bindings.
 // Movement uses arrow keys and Home/End. Ctrl+H, Ctrl+W, and Ctrl+U
-// match vim's insert-mode deletion shortcuts.
+// provide deletion shortcuts. Ctrl+C quits.
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		{Key: KeyEnter}:                       ActionSubmit,
-		{Key: KeyRune, Ch: 'd', Mod: ModCtrl}: ActionQuit,
+		{Key: KeyRune, Ch: 'c', Mod: ModCtrl}: ActionQuit,
 
 		{Key: KeyBackspace}:                   ActionBackspace,
 		{Key: KeyDelete}:                      ActionDelete,
@@ -64,41 +64,5 @@ func DefaultKeyMap() KeyMap {
 
 		{Key: KeyUp}:   ActionUp,
 		{Key: KeyDown}: ActionDown,
-	}
-}
-
-// EmacsKeyMap returns a keymap with emacs/readline bindings.
-func EmacsKeyMap() KeyMap {
-	return KeyMap{
-		{Key: KeyEnter}:                       ActionSubmit,
-		{Key: KeyRune, Ch: 'd', Mod: ModCtrl}: ActionQuit,
-
-		{Key: KeyBackspace}:                   ActionBackspace,
-		{Key: KeyDelete}:                      ActionDelete,
-		{Key: KeyRune, Ch: 'h', Mod: ModCtrl}: ActionBackspace,
-		{Key: KeyRune, Ch: 'w', Mod: ModCtrl}: ActionDeleteWordBack,
-		{Key: KeyRune, Ch: 'u', Mod: ModCtrl}: ActionDeleteToStart,
-		{Key: KeyRune, Ch: 'k', Mod: ModCtrl}: ActionDeleteToEnd,
-		{Key: KeyBackspace, Mod: ModAlt}:      ActionDeleteWordBack,
-
-		{Key: KeyLeft}:                        ActionLeft,
-		{Key: KeyRight}:                       ActionRight,
-		{Key: KeyLeft, Mod: ModCtrl}:          ActionWordLeft,
-		{Key: KeyRight, Mod: ModCtrl}:         ActionWordRight,
-		{Key: KeyHome}:                        ActionHome,
-		{Key: KeyEnd}:                         ActionEnd,
-		{Key: KeyRune, Ch: 'a', Mod: ModCtrl}: ActionHome,
-		{Key: KeyRune, Ch: 'e', Mod: ModCtrl}: ActionEnd,
-		{Key: KeyRune, Ch: 'b', Mod: ModCtrl}: ActionLeft,
-		{Key: KeyRune, Ch: 'f', Mod: ModCtrl}: ActionRight,
-		{Key: KeyRune, Ch: 'b', Mod: ModAlt}:  ActionWordLeft,
-		{Key: KeyRune, Ch: 'f', Mod: ModAlt}:  ActionWordRight,
-
-		{Key: KeyEnter, Mod: ModAlt}: ActionNewline,
-
-		{Key: KeyUp}:                          ActionUp,
-		{Key: KeyDown}:                        ActionDown,
-		{Key: KeyRune, Ch: 'p', Mod: ModCtrl}: ActionHistoryPrev,
-		{Key: KeyRune, Ch: 'n', Mod: ModCtrl}: ActionHistoryNext,
 	}
 }

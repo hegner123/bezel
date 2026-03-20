@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// CursorBlock is the pseudo cursor character rendered in the bezel.
+const CursorBlock = "█"
+
 // LineEditor manages an editable line of text with cursor position.
 // Zero value is ready to use.
 type LineEditor struct {
@@ -240,6 +243,14 @@ func (e *LineEditor) Len() int { return len(e.buf) }
 // Empty reports whether the editor has no content.
 func (e *LineEditor) Empty() bool { return len(e.buf) == 0 }
 
+// StringWithCursor returns the content with CursorBlock (█) inserted at
+// the cursor position. Use this when building bezel lines for Redraw.
+func (e *LineEditor) StringWithCursor() string {
+	left := string(e.buf[:e.pos])
+	right := string(e.buf[e.pos:])
+	return left + CursorBlock + right
+}
+
 // Row returns the 0-indexed line number of the cursor.
 func (e *LineEditor) Row() int {
 	row := 0
@@ -261,25 +272,29 @@ func (e *LineEditor) CursorPos() (row, col int) { return e.Row(), e.Col() }
 func (e *LineEditor) Lines() []string { return strings.Split(string(e.buf), "\n") }
 
 // VisualInfo describes the editor content laid out for rendering in a
-// terminal of a given width.
+// terminal of a given width, with CursorBlock embedded at the cursor
+// position.
 type VisualInfo struct {
-	Rows      []string // Visual rows (wrapped, with prefixes applied).
-	CursorRow int      // 0-indexed visual row of the cursor.
-	CursorCol int      // 0-indexed visual column of the cursor.
+	Rows []string // Visual rows (wrapped, with prefixes and cursor block applied).
 }
 
-// Visual computes visual rows and cursor position accounting for line
-// wrapping within the given terminal width. prefixes[i] is prepended to
-// logical line i (e.g. a prompt or continuation marker); missing entries
-// default to "". The caller passes Rows to Bezel.RedrawPrompt along with
-// CursorRow and CursorCol.
+// Visual computes visual rows accounting for line wrapping within the
+// given terminal width. CursorBlock (█) is embedded at the cursor
+// position. prefixes[i] is prepended to logical line i (e.g. a prompt
+// or continuation marker); missing entries default to "".
+// The caller passes Rows directly to Bezel.Redraw.
 func (e *LineEditor) Visual(width int, prefixes []string) VisualInfo {
 	if width <= 0 {
 		width = 80
 	}
 
-	lines := e.Lines()
-	curRow, curCol := e.CursorPos()
+	// Build content with cursor block inserted.
+	content := make([]rune, 0, len(e.buf)+1)
+	content = append(content, e.buf[:e.pos]...)
+	content = append(content, []rune(CursorBlock)...)
+	content = append(content, e.buf[e.pos:]...)
+
+	lines := strings.Split(string(content), "\n")
 
 	var info VisualInfo
 
@@ -296,9 +311,6 @@ func (e *LineEditor) Visual(width int, prefixes []string) VisualInfo {
 			avail = 1
 		}
 
-		baseVRow := len(info.Rows)
-
-		// Build visual rows for this logical line.
 		if len(runes) <= avail {
 			info.Rows = append(info.Rows, prefix+string(runes))
 		} else {
@@ -309,22 +321,6 @@ func (e *LineEditor) Visual(width int, prefixes []string) VisualInfo {
 					end = len(runes)
 				}
 				info.Rows = append(info.Rows, string(runes[start:end]))
-			}
-		}
-
-		// Compute cursor position if on this logical line.
-		if i == curRow {
-			if curCol < avail {
-				info.CursorRow = baseVRow
-				info.CursorCol = plen + curCol
-			} else {
-				past := curCol - avail
-				info.CursorRow = baseVRow + 1 + past/width
-				info.CursorCol = past % width
-			}
-			// Cursor at a wrap boundary may exceed current rows.
-			for info.CursorRow >= len(info.Rows) {
-				info.Rows = append(info.Rows, "")
 			}
 		}
 	}

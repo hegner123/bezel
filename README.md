@@ -15,7 +15,7 @@ Requires Go 1.22+. Supports macOS and Linux (amd64, arm64).
 ## Quick start
 
 ```go
-b, err := bezel.New(os.Stdin, os.Stdout, 3) // 3 rows of chrome at the bottom
+b, err := bezel.New(os.Stdin, os.Stdout, 3) // 3 initial rows of chrome
 if err != nil {
     log.Fatal(err)
 }
@@ -32,10 +32,14 @@ for ev := range b.Events() {
         return
     case bezel.ActionSubmit:
         hist.Add(text)
-        b.CursorToScroll()
         fmt.Println(text) // goes to scroll region
     }
-    b.RedrawPrompt(1, 2+ed.Pos(), "status", "> "+ed.String(), "hints")
+    size := b.Size()
+    v := ed.Visual(int(size.Cols), []string{"> "})
+    lines := []string{"status"}
+    lines = append(lines, v.Rows...)
+    lines = append(lines, "hints")
+    b.Redraw(lines...) // bezel grows/shrinks as content wraps
 }
 ```
 
@@ -50,7 +54,7 @@ for ev := range b.Events() {
 ├──────────────────────────────────────┤
 │ ── 80x24 ── thinking...             │  bezel row 0 (status)
 │ > user input here█                  │  bezel row 1 (prompt)
-│ Enter submit | Ctrl-D quit          │  bezel row 2 (hints)
+│ Enter submit | Ctrl-C quit          │  bezel row 2 (hints)
 └──────────────────────────────────────┘
 ```
 
@@ -63,7 +67,8 @@ Previous terminal history (before your tool launched) is preserved and scrollabl
 `Bezel` manages the scroll region, raw terminal mode, bracketed paste, SIGWINCH, and the merged event channel.
 
 ```go
-// Create. Height is the number of chrome rows at the bottom.
+// Create. Height is the initial number of chrome rows at the bottom.
+// Redraw adjusts dynamically based on the number of lines passed.
 b, err := bezel.New(os.Stdin, os.Stdout, 3)
 defer b.Close()
 
@@ -74,37 +79,36 @@ for ev := range b.Events() { ... }
 size := b.Size() // Size{Rows, Cols}
 ```
 
-### Redraw methods
+### Redraw
 
-Two methods for drawing the bezel, depending on where the cursor should end up:
+One method draws the bezel. The height adjusts dynamically to fit however many lines you pass. The real terminal cursor is hidden permanently; a pseudo cursor (`█`) is embedded via `Visual`:
 
 ```go
-// Redraw: cursor stays in the scroll region.
-// Use during output streaming — stdout writes continue uninterrupted.
-b.Redraw("status line", "> partial output...", "hints")
-
-// RedrawPrompt: cursor moves to (row, col) within the bezel.
-// Use during interactive input — user sees a cursor at the prompt.
-// row is 0-indexed from top of bezel, col is 0-indexed from left.
-b.RedrawPrompt(1, cursorCol, "status", "> input", "hints")
+size := b.Size()
+v := ed.Visual(int(size.Cols), []string{"> "})
+lines := []string{"status line"}
+lines = append(lines, v.Rows...)       // wrapped editor rows with █
+lines = append(lines, "hints")
+b.Redraw(lines...)                     // bezel grows/shrinks to fit
 ```
 
-### Switching between modes
-
-An agentic tool alternates between streaming output and waiting for input:
+The real cursor stays in the scroll region so `fmt.Println` and streaming output work without any mode switching — just write to stdout anytime:
 
 ```go
-// Tool output phase: cursor in scroll region.
+// Tool output phase.
 b.Redraw("thinking...", "> ", "Ctrl-C cancel")
 streamLLMOutput(os.Stdout) // tokens flow to scroll region
 
-// Input phase: cursor in bezel.
-b.RedrawPrompt(1, 2+ed.Pos(), "ready", "> "+ed.String(), "Enter submit")
+// Input phase — bezel grows if content wraps.
+size := b.Size()
+v := ed.Visual(int(size.Cols), []string{"> "})
+lines := []string{"ready"}
+lines = append(lines, v.Rows...)
+lines = append(lines, "Enter submit")
+b.Redraw(lines...)
 
-// Before writing to stdout when cursor is in the bezel:
-b.CursorToScroll()
+// Writing to stdout works anytime.
 fmt.Println("output") // lands in scroll region
-b.RedrawPrompt(...)    // cursor back to bezel
 ```
 
 ### Input during streaming
@@ -126,11 +130,12 @@ for {
     case ev := <-b.Events():
         action, _ := ed.HandleEvent(ev, km, &hist)
         if action == bezel.ActionQuit { return }
-        // Use Redraw (not RedrawPrompt) so the cursor stays in
-        // the scroll region and streamed output renders correctly.
-        // The user sees their text update in the bezel but without
-        // a blinking cursor at the prompt.
-        b.Redraw("streaming...", "> "+ed.String(), "Ctrl-C cancel")
+        size := b.Size()
+        v := ed.Visual(int(size.Cols), []string{"> "})
+        lines := []string{"streaming..."}
+        lines = append(lines, v.Rows...)
+        lines = append(lines, "Ctrl-C cancel")
+        b.Redraw(lines...)
 
     case chunk, ok := <-sseChan:
         if !ok {
@@ -141,8 +146,13 @@ for {
     }
 }
 
-// Streaming finished. Show cursor at prompt.
-b.RedrawPrompt(1, 2+ed.Pos(), "ready", "> "+ed.String(), "hints")
+// Streaming finished.
+size := b.Size()
+v := ed.Visual(int(size.Cols), []string{"> "})
+lines := []string{"ready"}
+lines = append(lines, v.Rows...)
+lines = append(lines, "hints")
+b.Redraw(lines...)
 ```
 
 The rule: if you are reading from `b.Events()`, the user can type. If you are blocked on something else, keystrokes queue until you resume reading.
@@ -224,6 +234,7 @@ ed.Set("preset")       // replace content, cursor to end
 ed.Clear()             // empty the editor
 
 ed.String()            // current content
+ed.StringWithCursor()  // content with █ at cursor position
 ed.Pos()               // cursor position (runes from start)
 ed.Len()               // content length in runes
 ed.Empty()             // true if no content
@@ -241,14 +252,14 @@ Returns the `Action` taken and, for `ActionSubmit`/`ActionPaste`, the relevant t
 
 ## Keymaps
 
-`KeyMap` maps key combinations to actions. `DefaultKeyMap()` provides standard terminal and emacs bindings.
+`KeyMap` maps key combinations to actions. `DefaultKeyMap()` provides standard terminal bindings.
 
 ### Default bindings
 
 | Key | Action |
 |-----|--------|
 | Enter | Submit |
-| Ctrl-D | Quit |
+| Ctrl-C | Quit |
 | Backspace, Ctrl-H | Backspace |
 | Delete | Delete |
 | Left, Ctrl-B | Cursor left |
@@ -268,9 +279,9 @@ Returns the `Action` taken and, for `ActionSubmit`/`ActionPaste`, the relevant t
 ```go
 km := bezel.DefaultKeyMap()
 
-// Change quit to Ctrl-C.
-delete(km, bezel.KeyBind{Key: bezel.KeyRune, Ch: 'd', Mod: bezel.ModCtrl})
-km[bezel.KeyBind{Key: bezel.KeyRune, Ch: 'c', Mod: bezel.ModCtrl}] = bezel.ActionQuit
+// Change quit to Ctrl-D.
+delete(km, bezel.KeyBind{Key: bezel.KeyRune, Ch: 'c', Mod: bezel.ModCtrl})
+km[bezel.KeyBind{Key: bezel.KeyRune, Ch: 'd', Mod: bezel.ModCtrl}] = bezel.ActionQuit
 
 // Add Ctrl-L (handle before HandleEvent for custom behavior).
 // Or bind it to an existing action:
@@ -353,11 +364,12 @@ func main() {
     km := bezel.DefaultKeyMap()
 
     redraw := func(status string) {
-        b.RedrawPrompt(1, 2+ed.Pos(),
-            status,
-            "> "+ed.String(),
-            "Enter send | Ctrl-D quit",
-        )
+        size := b.Size()
+        v := ed.Visual(int(size.Cols), []string{"> "})
+        lines := []string{status}
+        lines = append(lines, v.Rows...)
+        lines = append(lines, "Enter send | Ctrl-C quit")
+        b.Redraw(lines...)
     }
 
     redraw("ready")
@@ -374,13 +386,9 @@ func main() {
             return
         case bezel.ActionSubmit:
             hist.Add(text)
-
-            // Print the user's message to scroll region.
-            b.CursorToScroll()
             fmt.Printf("You: %s\n", text)
 
-            // Stream LLM response. Cursor is in scroll region
-            // so streamed tokens render correctly.
+            // Stream LLM response.
             b.Redraw("thinking...", "> ", "Ctrl-C cancel")
             response := callLLM(text)
             fmt.Printf("AI: %s\n", response)

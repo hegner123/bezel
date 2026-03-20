@@ -24,7 +24,7 @@ func main() {
 
 	banner := func() {
 		fmt.Println("Bezel — line editor with history")
-		fmt.Println("Up/Down or Ctrl-P/N navigate history")
+		fmt.Println("Up/Down navigate history")
 		fmt.Println("")
 		for _, entry := range hist.Entries() {
 			fmt.Println(prompt + entry)
@@ -33,11 +33,11 @@ func main() {
 
 	redraw := func() {
 		size := b.Size()
-		b.RedrawPrompt(1, len(prompt)+ed.Pos(),
-			fmt.Sprintf("── %dx%d ── %s ", size.Cols, size.Rows, status),
-			prompt+ed.String(),
-			"Enter submit | Up/Down history | Ctrl-D quit",
-		)
+		v := ed.Visual(int(size.Cols), []string{prompt})
+		lines := []string{fmt.Sprintf("── %dx%d ── %s ", size.Cols, size.Rows, status)}
+		lines = append(lines, v.Rows...)
+		lines = append(lines, "Enter submit | Up/Down history | Ctrl-C quit")
+		b.Redraw(lines...)
 	}
 
 	banner()
@@ -57,7 +57,6 @@ func main() {
 			return
 		case bezel.ActionSubmit:
 			hist.Add(text)
-			b.CursorToScroll()
 			fmt.Println(prompt + text)
 			status = fmt.Sprintf("submitted %d chars", len([]rune(text)))
 		case bezel.ActionPaste:

@@ -12,8 +12,10 @@ import (
 
 // Bezel manages a terminal scroll region with fixed bezel rows at the bottom.
 // stdout flows naturally in the scroll region (top area). The bezel area
-// (bottom N rows) is redrawn via Redraw or RedrawPrompt. Events from keyboard
-// input and terminal resize are delivered on a single channel.
+// (bottom N rows) is redrawn via Redraw. The real terminal cursor is hidden
+// permanently; use LineEditor.StringWithCursor to render a pseudo cursor (█)
+// as part of the bezel content. Events from keyboard input and terminal
+// resize are delivered on a single channel.
 type Bezel struct {
 	in     *os.File
 	out    *os.File
@@ -30,9 +32,11 @@ type Bezel struct {
 	cancel context.CancelFunc
 }
 
-// New creates a Bezel with bezelHeight fixed rows at the bottom of the terminal.
-// It enters raw mode, enables bracketed paste, sets up the scroll region, and
-// starts reading input. Call Close to restore the terminal.
+// New creates a Bezel with bezelHeight initial rows at the bottom of the
+// terminal. The height adjusts dynamically on each Redraw call to fit the
+// number of lines provided. It enters raw mode, enables bracketed paste,
+// sets up the scroll region, and starts reading input. Call Close to
+// restore the terminal.
 func New(in, out *os.File, bezelHeight int) (*Bezel, error) {
 	size, err := TermSize(in)
 	if err != nil {
@@ -93,7 +97,8 @@ func (c *Bezel) initScrollRegion() {
 		fmt.Fprintf(&buf, "\033[%d;1H\033[2K", row)
 	}
 
-	buf.WriteString("\0338") // DECRC: restore cursor to original position
+	buf.WriteString("\0338")     // DECRC: restore cursor to original position
+	buf.WriteString("\033[?25l") // hide cursor permanently
 	c.out.Write(buf.Bytes())
 }
 
@@ -110,86 +115,64 @@ func (c *Bezel) Size() Size {
 	return c.size
 }
 
-// Redraw clears and redraws the bezel rows with the given lines.
-// The cursor is saved before drawing and restored afterward, so it
-// remains wherever stdout left it in the scroll region.
-// Use this when output is streaming and the cursor should stay in
-// the scroll region.
+// Redraw clears and redraws the bezel with the given lines.
+// The bezel height adjusts dynamically to fit len(lines), resizing
+// the scroll region as needed. When the height changes, the cursor
+// is parked at the bottom of the new scroll region; otherwise it is
+// restored to its previous position.
+// Use LineEditor.Visual to get wrapped rows with the pseudo cursor
+// embedded.
 func (c *Bezel) Redraw(lines ...string) {
 	c.mu.Lock()
 	size := c.size
 	c.mu.Unlock()
 
-	sb := scrollBottom(int(size.Rows), c.height)
+	newHeight := len(lines)
+	maxHeight := int(size.Rows) - 1
+	if newHeight > maxHeight {
+		newHeight = maxHeight
+	}
+	if newHeight < 1 {
+		newHeight = 1
+	}
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
-	var buf bytes.Buffer
-	buf.WriteString("\0337\033[?25l") // DECSC (save cursor), hide cursor
+	oldHeight := c.height
+	oldSB := scrollBottom(int(size.Rows), oldHeight)
+	newSB := scrollBottom(int(size.Rows), newHeight)
+	heightChanged := newHeight != oldHeight
 
-	for i := range c.height {
-		row := sb + i + 1
+	var buf bytes.Buffer
+	buf.WriteString("\0337") // DECSC: save cursor position
+
+	if heightChanged {
+		// Clear old bezel rows before resizing.
+		for i := range oldHeight {
+			row := oldSB + i + 1
+			fmt.Fprintf(&buf, "\033[%d;1H\033[2K", row)
+		}
+		// Set new scroll region.
+		fmt.Fprintf(&buf, "\033[1;%dr", newSB)
+		c.height = newHeight
+	}
+
+	// Draw bezel rows.
+	for i := range newHeight {
+		row := newSB + i + 1
 		fmt.Fprintf(&buf, "\033[%d;1H\033[2K", row)
 		if i < len(lines) {
 			buf.WriteString(lines[i])
 		}
 	}
 
-	buf.WriteString("\0338\033[?25h") // DECRC (restore cursor), show cursor
-	c.out.Write(buf.Bytes())
-}
-
-// RedrawPrompt clears and redraws the bezel rows, then positions the
-// terminal cursor at (row, col) within the bezel area.
-// row is 0-indexed from the top of the bezel, col is 0-indexed from left.
-// Use this during interactive input so the cursor appears at the prompt.
-//
-// Before writing to stdout after RedrawPrompt, call CursorToScroll first.
-func (c *Bezel) RedrawPrompt(row, col int, lines ...string) {
-	c.mu.Lock()
-	size := c.size
-	c.mu.Unlock()
-
-	sb := scrollBottom(int(size.Rows), c.height)
-
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	var buf bytes.Buffer
-	buf.WriteString("\033[?25l") // hide cursor
-
-	for i := range c.height {
-		r := sb + i + 1
-		fmt.Fprintf(&buf, "\033[%d;1H\033[2K", r)
-		if i < len(lines) {
-			buf.WriteString(lines[i])
-		}
+	if heightChanged {
+		// Cursor may be outside new scroll region. Park at bottom.
+		fmt.Fprintf(&buf, "\033[%d;1H", newSB)
+	} else {
+		buf.WriteString("\0338") // DECRC: restore cursor to scroll region
 	}
-
-	// Position cursor within the bezel.
-	absRow := sb + row + 1
-	absCol := col + 1
-	fmt.Fprintf(&buf, "\033[%d;%dH\033[?25h", absRow, absCol)
-	c.out.Write(buf.Bytes())
-}
-
-// CursorToScroll moves the cursor to the bottom of the scroll region.
-// Call this before writing to stdout when the cursor is in the bezel
-// (after RedrawPrompt). Stdout writes will appear at the bottom of
-// the scroll region and scroll older content upward.
-func (c *Bezel) CursorToScroll() {
-	c.mu.Lock()
-	size := c.size
-	c.mu.Unlock()
-
-	sb := scrollBottom(int(size.Rows), c.height)
-
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "\033[%d;1H", sb)
 	c.out.Write(buf.Bytes())
 }
 
